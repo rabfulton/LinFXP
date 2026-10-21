@@ -1,5 +1,15 @@
 # Changes
 
+## Unreleased
+
+- Remove introductory GUI prompts, rename Open to Connect, and add directory
+  and transfer context menus with queue/dequeue, navigation, clipboard, and
+  transfer-management shortcuts.
+- Consolidate connection creation and editing in a single Connections dialog,
+  with explicit assignment to source or destination and independent pane choices.
+- Compare the two displayed directory listings by exact filename, highlighting
+  names missing from the opposite pane without recursion or content checks.
+
 ## 0.3.0
 
 - Choose This computer in either pane for local browsing, uploads, downloads,

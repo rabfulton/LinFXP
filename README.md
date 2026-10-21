@@ -103,12 +103,15 @@ This package does not remove your user settings or credentials on uninstall.
 
 ## Use
 
-1. For a remote connection, add a server using **New…** in either pane.
-   Each pane starts with no selected connection.
+1. Click **Connections…** at the top of the window to manage saved servers.
+   Use **New…** to create one or select an existing connection and click **Edit…**.
+   **Use in source** and **Use in destination** assign the selected connection;
+   alternatively choose it from either pane's dropdown. New connections are saved
+   without changing either pane until you assign them.
    Enter the host, SSH port, username, initial folder, and either a password or
    private key file. Passwords and key passphrases can be stored in the desktop
    keyring; connection settings contain no passwords.
-2. Choose **This computer** or a saved server in either pane and click **Open**.
+2. Choose **This computer** or a saved server in either pane and click **Connect**.
    Use the **…** button beside the path to choose a local directory, or type a
    path and press Enter. Verify the host-key fingerprint on first remote connection.
 3. Double-click folders to browse, or enter a remote path and press Enter.
@@ -129,6 +132,15 @@ This package does not remove your user settings or credentials on uninstall.
    The destination directory automatically refreshes when its submitted queue
    finishes. It keeps the folder you are currently browsing.
 
+Right-click a source entry for **Queue selected** or **Dequeue selected**.
+Source dequeue matches its full path and saved source connection across transfer
+batches; selecting a folder includes its queued descendants. The queue's own
+menu offers **Start queue**, **Dequeue selected**, retry/resume, cancel batch,
+transfer details, copy destination paths, and clear finished. Dequeue never
+deletes transferred files. Both directory panes also offer refresh, open folder,
+compare listings, copy full paths, and select all. Right-clicking an already
+selected row preserves multiple selections; an unselected row becomes the target.
+
 Uploads and downloads need only SFTP on the remote host; shell access and remote
 Python are unnecessary. Passwords, key files, and your local SSH agent can be used.
 For Server → server transfers, the destination additionally needs Python 3,
@@ -136,6 +148,13 @@ an OpenSSH client (`ssh`), SSH command execution, and network access to the sour
 Neither server needs a service, root access, or a Python package installed.
 
 ## Transfer behaviour
+
+Click **Compare** above the panes to highlight names present in only one of the
+two displayed directories. The status bar reports the count on each side.
+Comparison is case-sensitive and checks names only: matching names are treated
+as equal even if their types, sizes, dates, or contents differ. Folders are not
+scanned. Open both directories first; refreshing, navigating, or changing a
+connection clears the comparison. Click **Compare** again for a fresh comparison.
 
 - New output directories follow the destination SSH session's original umask.
   Completed files use mode `0666` filtered by that umask: the usual `0022` gives
@@ -201,9 +220,10 @@ Manifests capture source filenames, sizes, and timestamps at queue time; requeue
 if the source changes. Endpoint details are captured with each job; authentication
 credentials are refreshed from its saved connection when retrying.
 
-Each pane remembers its selected connection independently. If the same saved
-connection is selected in both panes, editing it in one pane creates a separate
-copy for that pane. Existing connection settings are backed up to timestamped
+Each pane remembers its selected connection independently. Editing in
+**Connections…** updates that saved connection wherever it is selected. To use
+different settings in each pane, create separate saved connections with **New…**.
+Existing connection settings are backed up to timestamped
 `connections-*.json.bak` files beside `state.json` before profile changes.
 
 ## Validation

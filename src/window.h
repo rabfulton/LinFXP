@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QMenu>
 #include <QTimer>
 #include <QTreeWidget>
 
@@ -38,8 +39,10 @@ class Window : public QMainWindow {
     bool polling = false, dispatching = false;
     bool destinationRefreshPending = false;
     QString activeDesktop;
+    bool comparisonActive = false;
     QWidget *makePane(Pane &p, const QString &title);
-    void editProfile(const QString &id = {}, Pane *target = nullptr);
+    void manageConnections();
+    void editProfile(const QString &id = {});
     void refreshProfiles(Pane *target = nullptr, const QString &selectedId = {},
                          const QString &changedId = {});
     void profileChanged(Pane &p);
@@ -48,9 +51,17 @@ class Window : public QMainWindow {
     Trust trust();
     void browse(Pane &p, const QString &path = {});
     void displayDirectory(Pane &p, const QVector<Entry> &entries);
+    void compareDirectories();
+    void clearDirectoryComparison();
+    void directoryActions(QMenu &menu, Pane &pane);
+    void queueActions(QMenu &menu);
+    QList<QTreeWidgetItem *> queuedSourceItems() const;
+    void dequeueSourceSelection();
+    void showTransferDetails();
+    void clearFinished();
     void addToQueue();
     void queueManifest(const QJsonObject &manifest, const Profile &from, const Profile &to,
-                       const QString &target, const QString &label);
+                       const QString &target, const QString &label, const QString &sourceRoot = {});
     void startQueue();
     void startDesktop(const QJsonObject &job, const Profile &from, const Profile &to);
     void poll();

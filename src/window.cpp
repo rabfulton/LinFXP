@@ -3,6 +3,7 @@
 #include "transfer.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDialog>
@@ -15,10 +16,12 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
@@ -71,6 +74,15 @@ QPushButton *button(const QString &text, QBoxLayout *layout, std::function<void(
 bool terminal(const QString &state) {
     return state == "Completed" || state == "Failed" || state == "Cancelled";
 }
+void selectContextItem(QTreeWidget *tree, const QPoint &point) {
+    auto item = tree->itemAt(point);
+    if (!item)
+        return;
+    if (!item->isSelected())
+        tree->clearSelection();
+    tree->setCurrentItem(item, 0, QItemSelectionModel::NoUpdate);
+    item->setSelected(true);
+}
 } // namespace
 Window::Window() {
     setWindowTitle("LinFXP — Remote file transfers");
@@ -106,12 +118,14 @@ Window::Window() {
     heading->addSpacing(18);
     heading->addWidget(new QLabel("Local and remote file transfers"));
     heading->addStretch();
-    button("New connection…", heading, [this] { editProfile(); });
+    auto compare = button("Compare", heading, [this] { compareDirectories(); });
+    compare->setObjectName("compareDirectories");
+    compare->setToolTip("Highlight names missing from the other displayed listing; case-sensitive, "
+                        "without recursion or size/content checks");
+    button("Connections…", heading, [this] {
+        manageConnections();
+    })->setObjectName("manageConnections");
     layout->addLayout(heading);
-    auto note = new QLabel("Choose This computer or a saved server in either pane. Local transfers "
-                           "need this window open; direct server transfers run independently.");
-    note->setWordWrap(true);
-    layout->addWidget(note);
     layout->addSpacing(8);
     auto vertical = new QSplitter(Qt::Vertical);
     auto horizontal = new QSplitter(Qt::Horizontal);
@@ -132,15 +146,7 @@ Window::Window() {
         retrySelected();
     })->setToolTip("Retry the selected transfer batches, preserving completed and removed files");
     button("Cancel batch", actions, [this] { cancelSelected(); });
-    button("Clear finished", actions, [this] {
-        QJsonArray keep;
-        for (auto j : jobs)
-            if (j.toObject()["state"].toString() != "Completed")
-                keep.append(j);
-        jobs = keep;
-        save();
-        renderQueue();
-    });
+    button("Clear finished", actions, [this] { clearFinished(); });
     qlayout->addLayout(actions);
     queue = new QTreeWidget;
     queue->setHeaderLabels({"Transfer", "Destination", "Status", "Progress", "Size", "Method"});
@@ -153,24 +159,14 @@ Window::Window() {
     queue->setColumnWidth(3, 210);
     queue->setColumnWidth(4, 100);
     queue->setItemDelegateForColumn(3, new QueueProgressDelegate(queue));
-    connect(queue, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
-        int index = jobIndex(item->data(0, Qt::UserRole).toString());
-        if (index < 0)
-            return;
-        auto j = jobs[index].toObject();
-        auto s = j["status"].toObject();
-        auto files = j["files"].toArray();
-        int fileIndex = item->data(0, Qt::UserRole + 1).toInt();
-        QString file = fileIndex >= 0 && fileIndex < files.size()
-                           ? files[fileIndex].toObject()["relative"].toString()
-                           : QString{};
-        QMessageBox::information(this, "Transfer details",
-                                 (file.isEmpty() ? j["label"].toString() : file) +
-                                     "\n\nDestination: " + j["destination"].toString() +
-                                     "\nState: " + item->text(2) +
-                                     "\nTransfer batch: " + j["label"].toString() +
-                                     "\nCurrent file: " + s["current"].toString() + "\n\n" +
-                                     j["error"].toString() + "\n" + s["error"].toString());
+    connect(queue, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem *, int) { showTransferDetails(); });
+    queue->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(queue, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
+        selectContextItem(queue, point);
+        QMenu menu(this);
+        queueActions(menu);
+        menu.exec(queue->viewport()->mapToGlobal(point));
     });
     qlayout->addWidget(queue);
     summary = new QLabel;
@@ -179,7 +175,6 @@ Window::Window() {
     vertical->setSizes({440, 260});
     layout->addWidget(vertical);
     setCentralWidget(central);
-    statusBar()->showMessage("Add your VPS and cabin server connections to begin.");
     refreshProfiles();
     for (Pane *p : {&source, &destination}) {
         QString id = paneSelections[p == &source ? "source" : "destination"].toString();
@@ -212,11 +207,7 @@ QWidget *Window::makePane(Pane &p, const QString &title) {
     QString role = &p == &source ? "source" : "destination";
     p.profile->setObjectName(role + "Profiles");
     row->addWidget(p.profile, 1);
-    button("New…", row, [this, &p] { editProfile({}, &p); })->setObjectName(role + "NewConnection");
-    button("Edit…", row, [this, &p] {
-        editProfile(p.profile->currentData().toString(), &p);
-    })->setObjectName(role + "EditConnection");
-    button("Open", row, [this, &p] { browse(p); });
+    button("Connect", row, [this, &p] { browse(p); });
     layout->addLayout(row);
     auto pathrow = new QHBoxLayout;
     button("↑", pathrow, [this, &p] {
@@ -244,6 +235,13 @@ QWidget *Window::makePane(Pane &p, const QString &title) {
     p.tree->setRootIsDecorated(false);
     p.tree->setAlternatingRowColors(true);
     p.tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    p.tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(p.tree, &QWidget::customContextMenuRequested, this, [this, &p](const QPoint &point) {
+        selectContextItem(p.tree, point);
+        QMenu menu(this);
+        directoryActions(menu, p);
+        menu.exec(p.tree->viewport()->mapToGlobal(point));
+    });
     p.tree->setSortingEnabled(true);
     p.tree->sortItems(0, Qt::AscendingOrder);
     p.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -267,6 +265,7 @@ QWidget *Window::makePane(Pane &p, const QString &title) {
     return box;
 }
 void Window::profileChanged(Pane &p) {
+    clearDirectoryComparison();
     if (&p == &destination)
         destinationRefreshPending = false;
     ++p.generation;
@@ -324,20 +323,76 @@ Profile Window::credentials(Profile p) {
         p.secret = loadSecret(p.id);
     return p;
 }
-void Window::editProfile(const QString &id, Pane *target) {
-    if (id == "__local__" && target) {
-        auto path =
-            QFileDialog::getExistingDirectory(this, "Choose local directory", target->path->text());
-        if (!path.isEmpty())
-            browse(*target, path);
-        return;
-    }
-    if (!target) {
-        if (source.profile->currentData().toString().isEmpty())
-            target = &source;
-        else if (destination.profile->currentData().toString().isEmpty())
-            target = &destination;
-    }
+void Window::manageConnections() {
+    QDialog dialog(this);
+    dialog.setObjectName("connectionsDialog");
+    dialog.setWindowTitle("Connections");
+    dialog.resize(620, 380);
+    auto layout = new QVBoxLayout(&dialog);
+    auto notice = new QLabel("Create or edit saved connections, then choose where to use them. "
+                             "Editing updates the saved connection in every pane using it.");
+    notice->setWordWrap(true);
+    layout->addWidget(notice);
+    auto list = new QListWidget;
+    list->setObjectName("savedConnections");
+    layout->addWidget(list);
+    auto actions = new QHBoxLayout;
+    auto reload = [this, list](const QString &selected) {
+        list->clear();
+        for (const auto &profile : profiles) {
+            auto item =
+                new QListWidgetItem(profile.name + " · " + profile.user + "@" + profile.host, list);
+            item->setData(Qt::UserRole, profile.id);
+            if (profile.id == selected)
+                list->setCurrentItem(item);
+        }
+        if (!list->currentItem() && list->count())
+            list->setCurrentRow(0);
+    };
+    button("New…", actions, [this, list, reload] {
+        QString prior =
+            list->currentItem() ? list->currentItem()->data(Qt::UserRole).toString() : QString{};
+        int count = profiles.size();
+        editProfile();
+        reload(profiles.size() > count ? profiles.back().id : prior);
+    })->setObjectName("newConnection");
+    auto edit = button("Edit…", actions, [this, list, reload] {
+        if (!list->currentItem())
+            return;
+        QString id = list->currentItem()->data(Qt::UserRole).toString();
+        editProfile(id);
+        reload(id);
+    });
+    edit->setObjectName("editConnection");
+    actions->addStretch();
+    auto assign = [list](Pane &pane) {
+        if (list->currentItem())
+            pane.profile->setCurrentIndex(
+                pane.profile->findData(list->currentItem()->data(Qt::UserRole)));
+    };
+    auto useSource = button("Use in source", actions, [this, assign] { assign(source); });
+    useSource->setObjectName("useConnectionSource");
+    auto useDestination =
+        button("Use in destination", actions, [this, assign] { assign(destination); });
+    useDestination->setObjectName("useConnectionDestination");
+    auto update = [list, edit, useSource, useDestination] {
+        bool selected = list->currentItem() != nullptr;
+        edit->setEnabled(selected);
+        useSource->setEnabled(selected);
+        useDestination->setEnabled(selected);
+    };
+    connect(list, &QListWidget::itemSelectionChanged, &dialog, update);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog,
+            [edit](QListWidgetItem *) { edit->click(); });
+    layout->addLayout(actions);
+    auto controls = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(controls, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(controls);
+    reload(source.profile->currentData().toString());
+    update();
+    dialog.exec();
+}
+void Window::editProfile(const QString &id) {
     Profile p;
     p.id = uid();
     bool existing = false;
@@ -352,26 +407,11 @@ void Window::editProfile(const QString &id, Pane *target) {
     } catch (const std::exception &e) {
         QMessageBox::warning(this, "Keyring", e.what());
     }
-    Pane *other = target == &source ? &destination : &source;
-    bool shared = existing && target && other->profile->currentData().toString() == id;
-    if (shared) {
-        // Editing one pane must never overwrite the connection used by the other.
-        p.id = uid();
-        p.remember = false;
-        existing = false;
-    }
     QDialog dialog(this);
-    QString role = target == &source ? "source" : target == &destination ? "destination" : "saved";
-    dialog.setWindowTitle((existing ? "Edit " : "New ") + role + " connection");
+    dialog.setWindowTitle(existing ? "Edit saved connection" : "New saved connection");
     dialog.setMinimumWidth(540);
     auto layout = new QVBoxLayout(&dialog);
     auto form = new QFormLayout;
-    if (shared) {
-        auto notice = new QLabel("This connection is selected in both panes. Saving here creates "
-                                 "a separate connection for this pane.");
-        notice->setWordWrap(true);
-        layout->addWidget(notice);
-    }
     auto name = new QLineEdit(p.name);
     name->setObjectName("connectionName");
     auto host = new QLineEdit(p.host);
@@ -466,7 +506,7 @@ void Window::editProfile(const QString &id, Pane *target) {
         }
     if (!replaced)
         profiles.append(p);
-    refreshProfiles(target, p.id, replaced ? p.id : QString{});
+    refreshProfiles(nullptr, {}, replaced ? p.id : QString{});
     save();
 }
 Trust Window::trust() {
@@ -515,6 +555,7 @@ void Window::browse(Pane &p, const QString &requested) {
         Profile profile = credentials(selectedProfile(p));
         QString path = requested.isEmpty() ? p.path->text() : requested;
         auto verify = trust();
+        clearDirectoryComparison();
         p.busy = true;
         p.info->setText("Connecting and reading directory…");
         int generation = p.generation;
@@ -565,6 +606,7 @@ void Window::browse(Pane &p, const QString &requested) {
     }
 }
 void Window::displayDirectory(Pane &p, const QVector<Entry> &entries) {
+    clearDirectoryComparison();
     int column = p.tree->header()->sortIndicatorSection();
     auto order = p.tree->header()->sortIndicatorOrder();
     p.tree->setSortingEnabled(false);
@@ -590,13 +632,242 @@ void Window::displayDirectory(Pane &p, const QVector<Entry> &entries) {
     p.tree->setSortingEnabled(true);
     p.tree->sortItems(column, order);
 }
+void Window::clearDirectoryComparison() {
+    if (!comparisonActive)
+        return;
+    for (Pane *pane : {&source, &destination}) {
+        for (int row = 0; row < pane->tree->topLevelItemCount(); ++row) {
+            auto item = pane->tree->topLevelItem(row);
+            for (int column = 0; column < pane->tree->columnCount(); ++column) {
+                item->setData(column, Qt::BackgroundRole, QVariant{});
+                item->setData(column, Qt::ForegroundRole, QVariant{});
+            }
+        }
+    }
+    comparisonActive = false;
+    statusBar()->showMessage("Comparison cleared — click Compare after opening both directories.");
+}
+void Window::compareDirectories() {
+    clearDirectoryComparison();
+    if (source.busy || destination.busy || source.loadedPath.isEmpty() ||
+        destination.loadedPath.isEmpty()) {
+        statusBar()->showMessage(
+            "Open both directories and wait for browsing to finish before comparing.");
+        return;
+    }
+    auto names = [](const Pane &pane) {
+        QSet<QString> result;
+        for (int row = 0; row < pane.tree->topLevelItemCount(); ++row)
+            result.insert(pane.tree->topLevelItem(row)->text(0));
+        return result;
+    };
+    const auto sourceNames = names(source), destinationNames = names(destination);
+    auto highlight = [](Pane &pane, const QSet<QString> &other) {
+        int missing = 0;
+        for (int row = 0; row < pane.tree->topLevelItemCount(); ++row) {
+            auto item = pane.tree->topLevelItem(row);
+            if (other.contains(item->text(0)))
+                continue;
+            ++missing;
+            for (int column = 0; column < pane.tree->columnCount(); ++column) {
+                item->setBackground(column, QColor(255, 226, 153));
+                item->setForeground(column, QColor(Qt::black));
+            }
+        }
+        return missing;
+    };
+    int sourceOnly = highlight(source, destinationNames);
+    int destinationOnly = highlight(destination, sourceNames);
+    comparisonActive = true;
+    statusBar()->showMessage(
+        QString("Name comparison: %1 source-only, %2 destination-only (highlighted). "
+                "Case-sensitive names only; folder contents, types, sizes and dates ignored.")
+            .arg(sourceOnly)
+            .arg(destinationOnly));
+}
+void Window::directoryActions(QMenu &menu, Pane &pane) {
+    bool selected = !pane.tree->selectedItems().isEmpty();
+    bool ready = !pane.busy && !pane.loadedPath.isEmpty() &&
+                 pane.loadedProfile == pane.profile->currentData().toString() &&
+                 pane.path->text() == pane.loadedPath;
+    if (&pane == &source) {
+        auto enqueue = menu.addAction("Queue selected →", this, [this] { addToQueue(); });
+        enqueue->setObjectName("contextQueue");
+        enqueue->setEnabled(
+            selected && ready && !destination.busy && !destination.loadedPath.isEmpty() &&
+            destination.loadedProfile == destination.profile->currentData().toString() &&
+            destination.path->text() == destination.loadedPath);
+        auto dequeue =
+            menu.addAction("Dequeue selected", this, [this] { dequeueSourceSelection(); });
+        dequeue->setObjectName("contextDequeueSource");
+        dequeue->setEnabled(ready && !queuedSourceItems().isEmpty());
+        dequeue->setToolTip("Remove matching entries from all destination batches; "
+                            "transferred files are never deleted");
+        menu.addSeparator();
+    }
+    auto item = pane.tree->currentItem();
+    int index = item ? item->data(0, Qt::UserRole).toInt() : -1;
+    auto open = menu.addAction("Open folder", this, [this, &pane] {
+        auto current = pane.tree->currentItem();
+        int index = current ? current->data(0, Qt::UserRole).toInt() : -1;
+        if (!pane.busy && index >= 0 && index < pane.entries.size() &&
+            pane.entries[index].type == SSH_FILEXFER_TYPE_DIRECTORY)
+            browse(pane, remoteJoin(pane.loadedPath, pane.entries[index].name));
+    });
+    open->setEnabled(ready && selected && index >= 0 && index < pane.entries.size() &&
+                     pane.entries[index].type == SSH_FILEXFER_TYPE_DIRECTORY);
+    menu.addAction("Refresh", this, [this, &pane] { browse(pane); })
+        ->setEnabled(!pane.busy && !pane.profile->currentData().toString().isEmpty());
+    menu.addAction("Compare listings", this, [this] { compareDirectories(); })
+        ->setEnabled(!source.busy && !destination.busy && !source.loadedPath.isEmpty() &&
+                     !destination.loadedPath.isEmpty());
+    menu.addSeparator();
+    auto copy = menu.addAction("Copy full path(s)", this, [&pane] {
+        QStringList paths;
+        for (auto item : pane.tree->selectedItems())
+            paths.append(remoteJoin(pane.loadedPath, item->text(0)));
+        if (!paths.isEmpty())
+            QApplication::clipboard()->setText(paths.join('\n'));
+    });
+    copy->setObjectName("contextCopyPaths");
+    copy->setEnabled(selected && ready);
+    menu.addAction("Select all", pane.tree, &QTreeWidget::selectAll)
+        ->setEnabled(pane.tree->topLevelItemCount() > 0);
+}
+QList<QTreeWidgetItem *> Window::queuedSourceItems() const {
+    QList<QTreeWidgetItem *> result;
+    if (source.busy || source.loadedPath.isEmpty() ||
+        source.loadedProfile != source.profile->currentData().toString() ||
+        source.path->text() != source.loadedPath)
+        return result;
+    QVector<QPair<QString, bool>> paths;
+    for (auto item : source.tree->selectedItems()) {
+        int index = item->data(0, Qt::UserRole).toInt();
+        if (index >= 0 && index < source.entries.size())
+            paths.append({remoteJoin(source.loadedPath, source.entries[index].name),
+                          source.entries[index].type == SSH_FILEXFER_TYPE_DIRECTORY});
+    }
+    QHash<QString, QJsonObject> batches;
+    for (auto value : jobs) {
+        auto job = value.toObject();
+        if (job["source_profile"].toObject()["id"].toString() == source.loadedProfile)
+            batches.insert(job["id"].toString(), job);
+    }
+    for (int row = 0; row < queue->topLevelItemCount(); ++row) {
+        auto item = queue->topLevelItem(row);
+        auto job = batches.value(item->data(0, Qt::UserRole).toString());
+        if (job.isEmpty())
+            continue;
+        auto files = job["files"].toArray();
+        int index = item->data(0, Qt::UserRole + 1).toInt();
+        QStringList candidates;
+        if (index >= 0 && index < files.size())
+            candidates.append(files[index].toObject()["source"].toString());
+        else if (files.isEmpty() && !job["source_directory"].toString().isEmpty())
+            for (auto directory : job["directories"].toArray())
+                candidates.append(
+                    remoteJoin(job["source_directory"].toString(), directory.toString()));
+        bool matches = false;
+        for (const auto &path : paths)
+            for (const auto &candidate : candidates)
+                if (candidate == path.first ||
+                    (path.second && candidate.startsWith(path.first + '/')))
+                    matches = true;
+        if (matches)
+            result.append(item);
+    }
+    return result;
+}
+void Window::dequeueSourceSelection() {
+    auto matching = queuedSourceItems();
+    if (matching.isEmpty())
+        return;
+    queue->clearSelection();
+    for (auto item : matching)
+        item->setSelected(true);
+    removeSelected();
+}
+void Window::queueActions(QMenu &menu) {
+    bool selected = !queue->selectedItems().isEmpty();
+    auto start = menu.addAction("Start queue", this, [this] { startQueue(); });
+    start->setEnabled(!jobs.isEmpty() && !dispatching);
+    auto dequeue = menu.addAction("Dequeue selected", this, [this] { removeSelected(); });
+    dequeue->setObjectName("contextDequeue");
+    dequeue->setEnabled(selected);
+    dequeue->setToolTip("Remove or skip selected entries without deleting transferred files");
+    menu.addAction("Retry / resume selected", this, [this] { retrySelected(); })
+        ->setEnabled(selected);
+    menu.addAction("Cancel selected batch(es)", this, [this] { cancelSelected(); })
+        ->setEnabled(selected);
+    menu.addSeparator();
+    menu.addAction("Transfer details…", this, [this] { showTransferDetails(); })
+        ->setEnabled(selected);
+    auto copy = menu.addAction("Copy destination path(s)", this, [this] {
+        QStringList paths;
+        for (auto item : queue->selectedItems()) {
+            int index = jobIndex(item->data(0, Qt::UserRole).toString());
+            if (index < 0)
+                continue;
+            auto job = jobs[index].toObject();
+            auto files = job["files"].toArray();
+            int file = item->data(0, Qt::UserRole + 1).toInt();
+            paths.append(file >= 0 && file < files.size()
+                             ? remoteJoin(job["destination"].toString(),
+                                          files[file].toObject()["relative"].toString())
+                             : job["destination"].toString());
+        }
+        if (!paths.isEmpty())
+            QApplication::clipboard()->setText(paths.join('\n'));
+    });
+    copy->setObjectName("contextCopyDestinations");
+    copy->setEnabled(selected);
+    menu.addSeparator();
+    menu.addAction("Select all", queue, &QTreeWidget::selectAll)
+        ->setEnabled(queue->topLevelItemCount() > 0);
+    menu.addAction("Clear finished", this, [this] { clearFinished(); })
+        ->setEnabled(!jobs.isEmpty());
+}
+void Window::showTransferDetails() {
+    auto selected = queue->selectedItems();
+    if (selected.isEmpty())
+        return;
+    auto item = queue->currentItem();
+    if (!item || !item->isSelected())
+        item = selected.first();
+    int index = jobIndex(item->data(0, Qt::UserRole).toString());
+    if (index < 0)
+        return;
+    auto job = jobs[index].toObject();
+    auto status = job["status"].toObject();
+    auto files = job["files"].toArray();
+    int fileIndex = item->data(0, Qt::UserRole + 1).toInt();
+    QString file = fileIndex >= 0 && fileIndex < files.size()
+                       ? files[fileIndex].toObject()["relative"].toString()
+                       : QString{};
+    QMessageBox::information(this, "Transfer details",
+                             (file.isEmpty() ? job["label"].toString() : file) +
+                                 "\n\nDestination: " + job["destination"].toString() + "\nState: " +
+                                 item->text(2) + "\nTransfer batch: " + job["label"].toString() +
+                                 "\nCurrent file: " + status["current"].toString() + "\n\n" +
+                                 job["error"].toString() + "\n" + status["error"].toString());
+}
+void Window::clearFinished() {
+    QJsonArray keep;
+    for (auto job : jobs)
+        if (job.toObject()["state"].toString() != "Completed")
+            keep.append(job);
+    jobs = keep;
+    save();
+    renderQueue();
+}
 void Window::queueManifest(const QJsonObject &manifest, const Profile &from, const Profile &to,
-                           const QString &target, const QString &label) {
+                           const QString &target, const QString &label, const QString &sourceRoot) {
     QJsonObject job = manifest;
     job["id"] = uid();
     job["label"] = label;
     job["destination"] = target;
     job["source_profile"] = from.json();
+    job["source_directory"] = sourceRoot;
     job["destination_profile"] = to.json();
     job["state"] = "Queued";
     job["engine"] = from.local || to.local ? "desktop" : "remote";
@@ -640,7 +911,8 @@ void Window::addToQueue() {
                 Connection c(from, verify);
                 return c.manifest(path, selected);
             },
-            [this, from, to, target, selected](const QJsonObject &manifest, const QString &error) {
+            [this, from, to, path, target, selected](const QJsonObject &manifest,
+                                                     const QString &error) {
                 if (!error.isEmpty()) {
                     QMessageBox::warning(this, "Cannot queue transfer", error);
                     return;
@@ -654,7 +926,7 @@ void Window::addToQueue() {
                 QString label = selected.size() == 1
                                     ? selected.front().name
                                     : QString::number(selected.size()) + " selected items";
-                queueManifest(manifest, from, to, target, label);
+                queueManifest(manifest, from, to, target, label, path);
                 if (manifest["skipped"].toInt() > 0)
                     QMessageBox::information(this, "Items excluded",
                                              QString::number(manifest["skipped"].toInt()) +
