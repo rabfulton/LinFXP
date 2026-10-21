@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LinFXP
+Comment=Direct SFTP downloads to your remote Linux server
+Exec=linfxp
+Icon=folder-remote
+Terminal=false
+Categories=Network;FileTransfer;

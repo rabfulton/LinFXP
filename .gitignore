@@ -1,0 +1,27 @@
+/build/
+/build-*/
+/cmake-build-*/
+/dist/
+__pycache__/
+*.pyc
+
+# Local tooling and private configuration, never project source.
+/.aws/
+/.codex/
+/.agents/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+state.json
+connections-*.json.bak
+
+# Generated packages and editor files.
+*.pkg.tar.*
+.vscode/
+.idea/
+*.swp
+*~
