@@ -37,6 +37,12 @@ Optional system installation:
 sudo cmake --install build --prefix /usr/local
 ```
 
+For a pacman-managed installation on Arch-based systems, use `./install.sh`
+instead. It builds and tests a fresh package, then asks for sudo authentication
+and installation confirmation. Run it again after source changes to upgrade.
+Build dependencies, including Python 3 and Paramiko for tests, must be installed.
+Run the script as your normal user, not with sudo.
+
 Remembering passwords requires a desktop Secret Service keyring. Without one,
 uncheck **Remember secret** to keep credentials for the current session only.
 

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Create an immutable source snapshot and Arch/Manjaro package recipe.
+"""Build an immutable Arch/Manjaro package; optionally install it with sudo.
 
-No installation, dependency installation, source download, or system mutation.
+--build builds and tests only. --install also installs the resulting package.
+Neither mode installs dependencies or downloads source changes.
 Each run creates a new package revision unless --release is explicitly supplied.
 """
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,7 +18,7 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_FILES = (
     'VERSION', 'CHANGELOG.md', 'README.md', 'LICENSE', 'CMakeLists.txt',
-    'resources.qrc', '.clang-format', '.gitignore',
+    'resources.qrc', '.clang-format', '.gitignore', 'install.sh',
 )
 SOURCE_DIRECTORIES = ('src', 'worker', 'tests', 'packaging', 'scripts', 'screenshots')
 
@@ -33,7 +35,16 @@ def snapshot_files():
     return sorted(paths)
 
 
-def build_snapshot(output, release=None, build=False):
+def build_snapshot(output, release=None, build=False, install=False):
+    if install:
+        if os.geteuid() == 0:
+            raise ValueError('Run install.sh as your normal user, not with sudo; '
+                             'only package installation needs root.')
+        for command in ('makepkg', 'pacman', 'sudo'):
+            if not shutil.which(command):
+                raise RuntimeError(f'{command} is required for installation; '
+                                   'use this script on an Arch-based system with build dependencies installed.')
+        build = True
     version = (ROOT / 'VERSION').read_text().strip()
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('VERSION must contain a numeric major.minor.patch version')
@@ -72,27 +83,36 @@ def build_snapshot(output, release=None, build=False):
         # Do not use --syncdeps or --install: this command only builds a package.
         subprocess.run(['makepkg', '--cleanbuild', '--clean', '--noconfirm', '--noprogressbar'],
                        cwd=directory, check=True)
-        packages = sorted(directory.glob('linfxp-*.pkg.tar.*'))
+        packages = sorted(p for p in directory.glob('linfxp-*.pkg.tar.*')
+                          if p.is_file() and p.suffix != '.sig')
         if not packages:
             raise RuntimeError('No package found; check whether makepkg.conf redirects PKGDEST')
         for package in packages:
-            if package.suffix != '.sig':
-                print(f'Package: {package}', flush=True)
+            print(f'Package: {package}', flush=True)
+            if not install:
                 print(f'Install/upgrade: sudo pacman -U "{package}"', flush=True)
+        if install:
+            print('Build and tests passed. Installing with sudo; review the pacman prompt.', flush=True)
+            subprocess.run(['sudo', 'pacman', '-U', '--', *(str(p) for p in packages)], check=True)
+            print('LinFXP installed. Restart the application to use the updated version.', flush=True)
     return directory
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', action='store_true', help='run makepkg and its tests; never install')
+    parser.add_argument('--install', action='store_true', help='build and test, then install with sudo pacman -U')
     parser.add_argument('--release', type=int, help='explicit pkgrel (default: next unused local revision)')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist', help='output directory (default: dist/)')
     arguments = parser.parse_args()
     try:
-        build_snapshot(arguments.output, arguments.release, arguments.build)
+        build_snapshot(arguments.output, arguments.release, arguments.build, arguments.install)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         print(str(error), file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print('Cancelled.', file=sys.stderr)
+        return 130
     return 0
 
 

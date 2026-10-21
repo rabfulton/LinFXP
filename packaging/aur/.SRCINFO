@@ -1,0 +1,28 @@
+pkgbase = linfxp-git
+	pkgdesc = Native GUI for local, SFTP, and direct server-to-server file transfers
+	pkgver = 0.3.0.r6.g3ac3a31
+	pkgrel = 1
+	url = https://github.com/rabfulton/LinFXP
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	checkdepends = python
+	checkdepends = python-paramiko
+	makedepends = git
+	makedepends = cmake>=3.20
+	makedepends = ninja
+	makedepends = pkgconf
+	depends = qt6-base
+	depends = libssh>=0.11
+	depends = libsecret
+	depends = glib2
+	depends = libgcc_s.so
+	depends = libstdc++.so
+	depends = glibc
+	optdepends = gnome-keyring: saved passwords via the desktop Secret Service
+	provides = linfxp=0.3.0.r6.g3ac3a31
+	conflicts = linfxp
+	source = linfxp::git+https://github.com/rabfulton/LinFXP.git
+	sha256sums = SKIP
+
+pkgname = linfxp-git

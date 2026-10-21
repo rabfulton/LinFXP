@@ -1,0 +1,39 @@
+# Maintainer: rabfulton
+pkgname=linfxp-git
+pkgver=0.3.0.r6.g3ac3a31
+pkgrel=1
+pkgdesc='Native GUI for local, SFTP, and direct server-to-server file transfers'
+arch=('x86_64' 'aarch64')
+url='https://github.com/rabfulton/LinFXP'
+license=('MIT')
+depends=('qt6-base' 'libssh>=0.11' 'libsecret' 'glib2' 'libgcc_s.so' 'libstdc++.so' 'glibc')
+makedepends=('git' 'cmake>=3.20' 'ninja' 'pkgconf')
+checkdepends=('python' 'python-paramiko')
+optdepends=('gnome-keyring: saved passwords via the desktop Secret Service')
+provides=("linfxp=${pkgver}")
+conflicts=('linfxp')
+source=('linfxp::git+https://github.com/rabfulton/LinFXP.git')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/linfxp"
+    printf '%s.r%s.g%s' "$(<VERSION)" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cmake -S "$srcdir/linfxp" -B "$srcdir/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DBUILD_TESTING=ON
+    cmake --build "$srcdir/build"
+}
+
+check() {
+    ctest --test-dir "$srcdir/build" --output-on-failure
+    "$srcdir/build/linfxp" --version
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+    mv "$pkgdir/usr/share/licenses/linfxp" "$pkgdir/usr/share/licenses/$pkgname"
+}

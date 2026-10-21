@@ -242,7 +242,11 @@ QWidget *Window::makePane(Pane &p, const QString &title) {
     });
     p.tree->setSortingEnabled(true);
     p.tree->sortItems(0, Qt::AscendingOrder);
+    p.tree->header()->setStretchLastSection(false);
+    p.tree->header()->setSectionResizeMode(QHeaderView::Interactive);
     p.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    for (int column : {1, 2})
+        p.tree->headerItem()->setTextAlignment(column, Qt::AlignRight | Qt::AlignVCenter);
     p.tree->setColumnWidth(1, 100);
     p.tree->setColumnWidth(2, 145);
     layout->addWidget(p.tree);
@@ -616,6 +620,8 @@ void Window::displayDirectory(Pane &p, const QVector<Entry> &entries) {
         item->setText(0, entry.name);
         item->setText(1, entry.type == SSH_FILEXFER_TYPE_DIRECTORY ? "Folder" : bytes(entry.size));
         item->setText(2, QDateTime::fromSecsSinceEpoch(entry.mtime).toString("yyyy-MM-dd HH:mm"));
+        for (int column : {1, 2})
+            item->setTextAlignment(column, Qt::AlignRight | Qt::AlignVCenter);
         item->setData(0, Qt::UserRole, index);
         item->setData(1, Qt::UserRole,
                       QVariant::fromValue<qulonglong>(

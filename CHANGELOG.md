@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an AUR linfxp-git recipe with commit-based versioning and package metadata.
+- Add install.sh to build, test, and install an Arch package with one command;
+  only the final installation uses sudo.
+- Keep Size and Modified right-aligned at the directory pane's right edge, with
+  manually resizable metadata columns and Name filling the remaining width.
 - Remove introductory GUI prompts, rename Open to Connect, and add directory
   and transfer context menus with queue/dequeue, navigation, clipboard, and
   transfer-management shortcuts.

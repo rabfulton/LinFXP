@@ -330,6 +330,40 @@ class ConnectionProfileTests : public QObject {
         window.destination.busy = false;
     }
 
+    void directoryMetadataStaysAtRightEdgeWhileNameExpands() {
+        Window window;
+        window.timer.stop();
+        window.show();
+        QApplication::processEvents();
+        for (auto pane : {&window.source, &window.destination}) {
+            window.displayDirectory(
+                *pane, {{QString(100, 'x'), 1024, 1700000100, SSH_FILEXFER_TYPE_REGULAR}});
+            auto header = pane->tree->header();
+            QVERIFY(!header->stretchLastSection());
+            QCOMPARE(header->sectionResizeMode(0), QHeaderView::Stretch);
+            for (int column : {1, 2}) {
+                QCOMPARE(header->sectionResizeMode(column), QHeaderView::Interactive);
+                QVERIFY(pane->tree->headerItem()->textAlignment(column) & Qt::AlignRight);
+                QVERIFY(pane->tree->topLevelItem(0)->textAlignment(column) & Qt::AlignRight);
+            }
+            int nameWidth = header->sectionSize(0);
+            header->resizeSection(1, header->sectionSize(1) + 20);
+            QApplication::processEvents();
+            QCOMPARE(header->sectionSize(0), nameWidth - 20);
+        }
+        int sourceNameWidth = window.source.tree->columnWidth(0);
+        int destinationNameWidth = window.destination.tree->columnWidth(0);
+        window.resize(window.width() + 400, window.height());
+        QApplication::processEvents();
+        QVERIFY(window.source.tree->columnWidth(0) > sourceNameWidth);
+        QVERIFY(window.destination.tree->columnWidth(0) > destinationNameWidth);
+        for (auto pane : {&window.source, &window.destination}) {
+            auto header = pane->tree->header();
+            QCOMPARE(header->sectionViewportPosition(2) + header->sectionSize(2),
+                     pane->tree->viewport()->width());
+        }
+    }
+
     void directoryHeadersSortRawValuesAndReverse() {
         Window window;
         window.timer.stop();
