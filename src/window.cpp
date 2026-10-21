@@ -115,8 +115,6 @@ Window::Window() {
     font.setBold(true);
     title->setFont(font);
     heading->addWidget(title);
-    heading->addSpacing(18);
-    heading->addWidget(new QLabel("Local and remote file transfers"));
     heading->addStretch();
     auto compare = button("Compare", heading, [this] { compareDirectories(); });
     compare->setObjectName("compareDirectories");
@@ -1502,15 +1500,15 @@ void Window::demo() {
     jobs = QJsonArray{};
     Profile vps;
     vps.id = "demo-vps";
-    vps.name = "My VPS";
+    vps.name = "Source server";
     vps.host = "vps.example.net";
-    vps.user = "rab";
+    vps.user = "user";
     vps.path = "/srv/files";
     Profile cabin;
     cabin.id = "demo-cabin";
-    cabin.name = "Cabin server";
+    cabin.name = "Backup server";
     cabin.host = "cabin.example.net";
-    cabin.user = "rab";
+    cabin.user = "user";
     cabin.path = "/srv/downloads";
     profiles = {vps, cabin};
     refreshProfiles();
@@ -1534,6 +1532,8 @@ void Window::demo() {
     auto j = QJsonObject{
         {"id", "preview"},
         {"label", "Photos"},
+        {"source_profile", vps.json()},
+        {"destination", cabin.path},
         {"destination_profile", cabin.json()},
         {"state", "Running"},
         {"files", QJsonArray{QJsonObject{{"relative", "Photos/2024.zip"}, {"size", 1073741824.0}},

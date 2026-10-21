@@ -18,7 +18,7 @@ SOURCE_FILES = (
     'VERSION', 'CHANGELOG.md', 'README.md', 'LICENSE', 'CMakeLists.txt',
     'resources.qrc', '.clang-format', '.gitignore',
 )
-SOURCE_DIRECTORIES = ('src', 'worker', 'tests', 'packaging', 'scripts')
+SOURCE_DIRECTORIES = ('src', 'worker', 'tests', 'packaging', 'scripts', 'screenshots')
 
 
 def snapshot_files():
